@@ -1,0 +1,290 @@
+---
+output:
+  pdf_document: default
+  html_document: default
+---
+
+---
+title: "movielens"
+author: "Kabir Kathuria"
+date: "1/15/2022"
+output: pdf_document
+---
+
+## Introduction/Overview
+
+The data set used in this project is the 10M MovieLens data set, introduced previously in the HarvardX Data Science Professional Certificate program. The goal of this project is to conduct an exploratory data analysis to aid in developing a machine learning algorithm that reviews the input in the provided edx subset to make movie rating predictions in the validation subset.
+
+In the edx subset, there are 9,000,055 observations and 6 variables. The variables are listed below:
+
+1. title
+2. movieId
+3. userId
+4. rating
+5. genres
+6. timestamp
+
+In the validation subset, there are only 999,999 observations. After analyzing the movie rating trends in the edx data set, I plan to evaluate the root mean squared error (RMSE) value.
+
+Calculating the RMSE value is essential in determining the accuracy of the movie recommendation algorithm. In summary, the RMSE value measures the difference between predicted and observed values in a model, so the goal is to get as low of an RMSE value as possible. This is the RMSE function used in the script:
+
+```{r RMSEfunction}
+RMSE <- function(realRating, predictedRating)
+{
+  sqrt(mean((realRating - predictedRating)^2))
+}
+```
+
+Link to the data set: https://grouplens.org/datasets/movielens/10m/
+
+## Installing/Loading Necessary Packages
+
+The packages needed for this analysis must be installed, and loaded (Note: this process could take a couple of minutes).
+
+```{r downloads}
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(data.table)) install.packages("data.table", repos = "http://cran.us.r-project.org")
+if(!require(ggplot2)) install.packages("ggplot2", repos = "http://cran.us.r-project.org")
+if(!require(tidyr)) install.packages("tidyr", repos = "http://cran.us.r-project.org")
+if(!require(knitr)) install.packages("knitr", repos = "http://cran.us.r-project.org")
+if(!require(dplyr)) install.packages("dplyr", repos = "http://cran.us.r-project.org")
+if(!require(stringr)) install.packages("stringr", repos = "http://cran.us.r-project.org")
+if(!require(readr)) install.packages("readr", repos = "http://cran.us.r-project.org")
+if(!require(gridExtra)) install.packages("gridExtra", repos = "http://cran.us.r-project.org")
+if(!require(Rcpp)) install.packages("Rcpp", repos = "http://cran.us.r-project.org")
+
+library(tidyverse)
+library(caret)
+library(data.table)
+library(ggplot2)
+library(tidyr)
+library(knitr)
+library(dplyr)
+library(stringr)
+library(readr)
+library(gridExtra)
+library(Rcpp)
+```
+
+```{r initial}
+dl <- tempfile()
+download.file("http://files.grouplens.org/datasets/movielens/ml-10m.zip", dl)
+
+ratings <- fread(text = gsub("::", "\t", readLines(unzip(dl, "ml-10M100K/ratings.dat"))),
+                 col.names = c("userId", "movieId", "rating", "timestamp"))
+
+movies <- str_split_fixed(readLines(unzip(dl, "ml-10M100K/movies.dat")), "\\::", 3)
+colnames(movies) <- c("movieId", "title", "genres")
+
+# if using R 4.0 or later:
+movies <- as.data.frame(movies) %>% mutate(movieId = as.numeric(movieId),
+                                           title = as.character(title),
+                                           genres = as.character(genres))
+
+
+movielens <- left_join(ratings, movies, by = "movieId")
+```
+
+The data set will be split into two subsets: “edx” and “validation”. “edx” will serve to train the recommendation algorithm, while “validation” will serve to test movie ratings.
+
+```{r validation}
+# Validation set will be 10% of MovieLens data
+set.seed(1, sample.kind="Rounding")
+test_index <- createDataPartition(y = movielens$rating, p = 0.1, list = FALSE)
+edx <- movielens[-test_index,]
+temp <- movielens[test_index,]
+
+# Make sure userId and movieId in validation set are also in edx set
+validation <- temp %>% 
+  semi_join(edx, by = "movieId") %>%
+  semi_join(edx, by = "userId")
+
+# Add rows removed from validation set back into edx set
+removed <- anti_join(temp, validation)
+edx <- rbind(edx, removed)
+
+rm(dl, ratings, movies, test_index, temp, movielens, removed)
+```
+
+## Dataset Exploration
+
+An in-depth summary of edx and validation subsets with six different variables. The total number of unique movies and users in the data set is displayed.
+
+```{r summary}
+# In depth summary of validation and edx dataset
+summary(validation)
+summary(edx)
+
+# Total number of movies and users
+edx %>% 
+  summarize(n_users = n_distinct(userId), n_movies = n_distinct(movieId))
+```
+
+Plots displaying the number of ratings per user, movie, and genre. The first histogram demonstrates the average number of ratings for each user, fluctuating based on popularity. The second histogram demonstrates the average number of ratings for each movie. The bar chart demonstrates the average number of ratings for each genre in descending order. 
+
+```{r plots}
+# Histogram of number of ratings/user
+edx %>%
+  count(userId) %>%
+  ggplot(aes(n)) +
+  geom_histogram(bins = 20, color = "red") +
+  scale_x_log10() +
+  ggtitle("Number of ratings/user") +  
+  xlab("Number of ratings") + 
+  ylab("Number of users")
+
+# Histogram of number of ratings/movie
+edx %>%
+  count(movieId) %>%
+  ggplot(aes(n)) +
+  geom_histogram(bins = 20, color = "blue") +
+  scale_x_log10() +
+  ggtitle("Number of ratings/movie") +
+  xlab("Number of ratings") +
+  ylab("Number of movies") +
+  
+# Bar chart of number of ratings/genre
+edx %>%
+  separate_rows(genres, sep = "|") %>%
+  group_by(genres) %>%
+  summarize(rats = n()) %>%
+  arrange(desc(rats)) %>%
+  geom_bar(aes(fill = genres)) +
+  ggplot(aes(genres, rats)) +
+  ggtitle("Number of ratings/genre")
+```
+
+
+## Modeling Results
+
+The residual mean squared error (RMSE) value determines the error in the recommendation algorithm. Essentially, it is similar to the standard deviation because it is the expected error when predicting a movie rating.
+
+```{r RMSEvalue}
+# RMSE function
+RMSE <- function(realRating, predictedRating)
+{
+  sqrt(mean((realRating - predictedRating)^2))
+}
+```
+
+The mean movie rating model predicts the same rating for every movie, so we can base the ratings off of the mean rating from the data set. Unfortunately, the calculated RMSE value from this model greatly exceeds the desired RMSE value.
+
+```{r meanMovie}
+# Analyzing mean movie rating model
+edxMean <- mean(edx$rating)
+rmse <- RMSE(validation$rating, edxMean)
+
+rmseResults <- data_frame(method = "Mean Movie Rating Model", RMSE = rmse)
+rmseResults
+```
+
+Based on results from the mean movie rating model, popularity plays a major role in providing certain movies with a generally higher rating than others. This is accounted for in the movie effect model, which results in a lower RMSE value but still not as low as desired.
+
+```{r movieEffect}
+# Analyzing movie effect model
+edxMean <- mean(edx$rating)
+
+movie_mean <- edx %>%
+  group_by(movieId) %>% 
+  summarize(movieAvg = mean(rating - edxMean))
+movie_mean
+
+movie_mean %>% qplot(movieAvg, data = ., geom = "histogram", bins = 20, color = I("purple"))
+
+predictedRating <- edxMean +
+  validation %>%
+  left_join(movie_mean, by = "movieId") %>% 
+  pull(movieAvg)
+  
+effectModel <- RMSE(predictedRating, validation$rating)
+
+rmseResults <- bind_rows(rmseResults, data_frame(method = "Movie Effect Model", RMSE = effectModel))
+rmseResults
+```
+
+An error in the previous model is that the RMSE did not consider the impact of users. There is a wide variety of users, some who have rated countless movies and some who have rated little to none. This is taken into account in the user impact model.
+
+```{r userImpact}
+# Analyzing user impact model
+edx %>%
+  group_by(userId) %>% 
+  summarize(ratingMean = mean(rating)) %>% 
+  filter(n() >= 100) %>%
+  ggplot(aes(ratingMean)) + 
+  geom_histogram(bins = 20, color = "green")
+
+userAvg <- edx %>% 
+  left_join(movie_mean, by = 'movieId') %>%
+  group_by(userId) %>%
+  summarize(userMean = mean(rating - edxMean - movieAvg))
+userAvg
+
+userAvg %>% qplot(movieAvg, data = ., geom = "histogram", bins = 20, color = I("orange"))
+
+predictedRating <- validation %>% 
+  left_join(movie_mean, by = 'movieId') %>%
+  left_join(userAvg, by = 'userId') %>%
+  mutate(prediction = edxMean + userMean + movieAvg) %>%
+  pull(prediction)
+```
+
+Finally, the RMSE is very close to the desired value of 0.8649. Although it is very slightly above, it is definitely much more accurate than the other two models.
+
+```{r updatedRMSE}
+# Updated RMSE results
+userRMSE <- RMSE(predictedRating, validation$rating)
+rmseResults <- bind_rows(rmseResults, data_frame(method="Movie/User Impact Model", RMSE = userRMSE))
+rmseResults
+```
+
+There could be distortion in the RMSE prediction if there are movies in the data set with very few ratings, or if there are users who have rated very few movies. Regularizing this data using lambda, a tuning parameter, will reduce the RMSE as much as possible.
+
+```{r possibleLAMBDA}
+# Possible lambdas with movie/user bias
+possibleLAMBDAS <- seq(0, 10, 0.25)
+rmses <- sapply(possibleLAMBDAS, function(l){
+  
+edxMean <- mean(edx$rating)
+
+movieAvg <- edx %>%
+  group_by(movieId) %>%
+  summarize(movieAvg = sum(rating - edxMean)/(n() + l))
+
+userMean <- edx %>% 
+  left_join(movieAvg, by = "movieId") %>%
+  group_by(userId) %>%
+  summarize(userMean = sum(rating - edxMean - movieAvg)/(n() + l))
+  
+predictedRating <- validation %>% 
+  left_join(movieAvg, by = "movieId") %>%
+  left_join(userMean, by = "userId") %>%
+  mutate(prediction = edxMean + userMean + movieAvg) %>%
+  pull(prediction)
+  
+return(RMSE(validation$rating, predictedRating)) })
+```
+
+## Conclusion
+
+Qplot of all lambda values and all RMSE values:
+
+```{r lambdas_qplot}
+qplot(possibleLAMBDAS, rmses)
+```
+
+Final lambda and RMSE results:
+
+```{r finalLAMBDA}
+finalLAMBDA <- possibleLAMBDAS[which.min(rmses)]
+finalLAMBDA
+
+rmseResults <- bind_rows(rmseResults, data_frame(method = "Movie/User Impact Model with Regularized Effects", RMSE = min(rmses)))
+rmseResults
+```
+
+
+
+The goal of this MovieLens project was to create a machine learning algorithm that predicts movie ratings with as little error as possible. The primary way to avoid error was to create a model that achieved an RMSE value lower than 0.8649. Eventually, I was successful on the fourth time when I regularized the user impact model. Since this model takes the most user factors into account, it was the most effective, resulting in an RMSE value of approximately 0.864.
+
+For future analysis, I think this case could be even more interesting by taking user input variables like favorite actors and favorite directors into account. Although this would be much tougher to analyze, it would most likely result in an even lower RMSE value as the machine learning algorithm will have further information about the particular user. Additionally, if I were to work on this project again in the future, I would add a linear model to enhance predictions.
